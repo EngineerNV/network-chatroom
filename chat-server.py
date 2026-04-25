@@ -1,104 +1,174 @@
+"""
+AOL Retro Chatroom - Server
+Multi-threaded TCP chat server on localhost:12000
+"""
 from socket import *
 import sys
-import threading 
-import time 
+import threading
+import logging
 
-socketList = [] #this will keep track of users to sockets for sending messages 
-online = [] # this will list all the users that are online
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("chat-server")
 
-def initServer():#this will initialize the server before we start authentication 
-	serverPort = 12000 #change these two variable to have different server hosting ports and IP addresses 
-	serverAddress = 'localhost'
-	try: # seeing if we can create socket
-		serverSocket = socket(AF_INET,SOCK_STREAM)
-		serverSocket.bind((serverAddress,serverPort))
-		serverSocket.listen(10)
-		print('The server is ready to receive')
-		return serverSocket
-	except:
-		print('Error: Server could not create socket please change port number or check connection')
-		sys.exit(0)
-		
-def serverOps(connectionSocket,addr): # this is the thread that will start the authentication process and 
-	#lists for authentication
-	global socketList
-	global online
-	pwords = ['p000','p000','p000','p591']
-	users =  ['test1','test2','test3','nvaughn']
-	authUser = ''
-	#receiving HELLO data to intiate interactions         
-	data = connectionSocket.recv(1024).decode()
-	if 'HELLO' in data:
-		#sending data
-		dataStr = 'HELLO\n'     
-		connectionSocket.send(dataStr.encode())
-	else: #ending the connection they failed to answer hello
-		connectionSocket.close()
-		return 
-	
-	count = 0
-	while True: #this loop is for authenticating the user returning affirmitive or negative responses
-		# client connection will close after 4 tries
-		#waiting to receive user auth data          
-		data = connectionSocket.recv(1024).decode()
-		a,usr,pswd = data.split(':')
-		if any(usr in u for u in users) and any(pswd in p for p in pwords): 
-			socketList.append((usr,connectionSocket))
-			dataStr = 'AUTHYES\n'
-			connectionSocket.send(dataStr.encode())
-			if usr not in online:
-				online.append(usr)
-				authUser = usr # this will be used to keep track of our user name
-				signin = 'SIGNIN: ' + usr + '\n'
-				for s in socketList:
-					s[1].send(signin.encode())
-			
-			break
-		elif count == 3:#disconnecting the client too many bad choices
-			dataStr = 'AUTHNO\n'
-			connectionSocket.send(dataStr.encode())
-			connectionSocket.close()
-			return
-		dataStr = 'AUTHNO\n'
-		connectionSocket.send(dataStr.encode())
-		count = count + 1 #increment the loop	
-	while True: # this loop will run the main operations of sending messages 
-		data = connectionSocket.recv(1024).decode()
-		if 'LIST' in data:
-			olist = ', '.join(online)
-			connectionSocket.send(olist.encode())
-		elif 'TO:' in data:
-			stat,usr,msg = data.split(':')
-			sendingMsg = 'FROM:' + authUser + ':' + msg + '\n'
-			for s in socketList:
-				if s[0] == usr:
-					s[1].send(sendingMsg.encode())
-		else:
-			usrCount = 0 # using this to count how many users there are with the same name
-			for s in socketList:
-				if s[0] == authUser:
-					usrCount = usrCount + 1
-			if usrCount == 1:		
-				signin = 'SIGNOFF:' + authUser + '\n'
-				for s in socketList:
-					s[1].send(signin.encode())
-				online.remove(authUser)				
-			socketList.remove((authUser,connectionSocket))
-			connectionSocket.close()
-			return
-			
-			
-def main():
-	serverSocket = initServer()
-	threads= [] #storing threads in here, in case I need to edit them in the future
-	while True:
-		connectionSocket, addr = serverSocket.accept()
-		#code snippet inspired from https://pymotw.com/2/threading/
-		t = threading.Thread(target=serverOps, args=(connectionSocket, addr))
-		threads.append(t)
-		t.start() 
-	serverSocket.close()
-	
+SERVER_HOST = "localhost"
+SERVER_PORT = 12000
+MAX_PENDING = 10
+BUFFER = 4096
+MAX_AUTH_TRIES = 3
+
+# username -> password  (extend here to add accounts)
+USERS = {
+    "test1":      "p000",
+    "test2":      "p000",
+    "test3":      "p000",
+    "engineerNV": "p591",
+}
+
+# Thread-safe shared state
+_lock = threading.Lock()
+socket_list: list[tuple[str, socket]] = []   # [(username, conn), ...]
+online: list[str] = []
+
+
+def _broadcast(message: str, exclude: socket | None = None) -> None:
+    """Send a message to every connected client (optionally skip one)."""
+    encoded = message.encode()
+    with _lock:
+        targets = list(socket_list)
+    for _user, sock in targets:
+        if sock is not exclude:
+            try:
+                sock.send(encoded)
+            except OSError:
+                pass
+
+
+def _send(sock: socket, message: str) -> None:
+    try:
+        sock.send(message.encode())
+    except OSError:
+        pass
+
+
+def _recv(sock: socket) -> str:
+    try:
+        return sock.recv(BUFFER).decode().strip()
+    except OSError:
+        return ""
+
+
+def handle_client(conn: socket, addr: tuple) -> None:
+    log.info("Connection from %s:%s", *addr)
+
+    # --- Handshake ---
+    data = _recv(conn)
+    if data != "HELLO":
+        conn.close()
+        return
+    _send(conn, "HELLO\n")
+
+    # --- Authentication ---
+    auth_user = ""
+    for attempt in range(MAX_AUTH_TRIES):
+        data = _recv(conn)
+        parts = data.split(":")
+        if len(parts) != 3 or parts[0] != "AUTH":
+            _send(conn, "AUTHNO\n")
+            continue
+        _, usr, pwd = parts
+        if USERS.get(usr) == pwd:
+            auth_user = usr
+            with _lock:
+                socket_list.append((usr, conn))
+                already_online = usr in online
+                if not already_online:
+                    online.append(usr)
+            _send(conn, "AUTHYES\n")
+            if not already_online:
+                _broadcast(f"SIGNIN:{usr}\n")
+                log.info("%s signed in", usr)
+            break
+        _send(conn, "AUTHNO\n")
+    else:
+        log.warning("Too many failed auth attempts from %s:%s", *addr)
+        conn.close()
+        return
+
+    # --- Main message loop ---
+    while True:
+        data = _recv(conn)
+        if not data:
+            break
+
+        if data == "LIST":
+            with _lock:
+                user_list = ", ".join(online)
+            _send(conn, user_list + "\n")
+
+        elif data.startswith("TO:"):
+            parts = data.split(":", 2)
+            if len(parts) == 3:
+                _, recipient, msg = parts
+                payload = f"FROM:{auth_user}:{msg}\n"
+                with _lock:
+                    targets = [s for u, s in socket_list if u == recipient]
+                for sock in targets:
+                    _send(sock, payload)
+                if not targets:
+                    _send(conn, f"SYSMSG:{recipient} is not online\n")
+            log.info("%s -> %s", auth_user, parts[1] if len(parts) > 1 else "?")
+
+        elif data == "BYE" or data == "":
+            break
+
+        else:
+            log.warning("Unknown command from %s: %r", auth_user, data)
+
+    # --- Clean up ---
+    with _lock:
+        try:
+            socket_list.remove((auth_user, conn))
+        except ValueError:
+            pass
+        remaining = sum(1 for u, _ in socket_list if u == auth_user)
+        if remaining == 0 and auth_user in online:
+            online.remove(auth_user)
+            do_broadcast = True
+        else:
+            do_broadcast = False
+
+    if do_broadcast:
+        _broadcast(f"SIGNOFF:{auth_user}\n")
+        log.info("%s signed off", auth_user)
+
+    conn.close()
+
+
+def main() -> None:
+    try:
+        server_sock = socket(AF_INET, SOCK_STREAM)
+        server_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        server_sock.bind((SERVER_HOST, SERVER_PORT))
+        server_sock.listen(MAX_PENDING)
+        log.info("AOL Retro Chat Server ready on %s:%s", SERVER_HOST, SERVER_PORT)
+    except OSError as exc:
+        log.error("Cannot start server: %s", exc)
+        sys.exit(1)
+
+    try:
+        while True:
+            conn, addr = server_sock.accept()
+            t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+            t.start()
+    except KeyboardInterrupt:
+        log.info("Server shutting down.")
+    finally:
+        server_sock.close()
+
 
 if __name__ == "__main__":
-   main()
+    main()
