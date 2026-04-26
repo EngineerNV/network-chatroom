@@ -6,7 +6,7 @@ line-based protocol).
 
 Listens on localhost:12000 by default.
 """
-from socket import *
+import socket
 import hashlib
 import logging
 import os
@@ -41,7 +41,7 @@ SEED_USERS = {
 
 # ── Thread-safe shared state ─────────────────────────────────────────────────
 _lock = threading.Lock()
-socket_list: list[tuple[str, socket]] = []   # [(username, conn), ...]
+socket_list: list[tuple[str, socket.socket]] = []   # [(username, conn), ...]
 online: list[str] = []
 # Separate from `_lock` so a slow disk write can't stall message routing.
 _db_lock = threading.Lock()
@@ -170,7 +170,7 @@ class LineReader:
     `\\n` arrives.
     """
 
-    def __init__(self, sock: socket):
+    def __init__(self, sock: socket.socket):
         self.sock = sock
         self.buf = bytearray()
 
@@ -193,7 +193,7 @@ class LineReader:
         return line
 
 
-def _send(sock: socket, message: str) -> None:
+def _send(sock: socket.socket, message: str) -> None:
     if not message.endswith("\n"):
         message += "\n"
     try:
@@ -202,7 +202,7 @@ def _send(sock: socket, message: str) -> None:
         pass
 
 
-def _broadcast(message: str, exclude: socket | None = None) -> None:
+def _broadcast(message: str, exclude: socket.socket | None = None) -> None:
     encoded = (message if message.endswith("\n") else message + "\n").encode("utf-8")
     with _lock:
         targets = list(socket_list)
@@ -228,7 +228,7 @@ def _send_to_user(recipient: str, payload: str) -> int:
 
 
 # ── Per-client handler ───────────────────────────────────────────────────────
-def handle_client(conn: socket, addr: tuple) -> None:
+def handle_client(conn: socket.socket, addr: tuple) -> None:
     log.info("Connection from %s:%s", *addr)
     reader = LineReader(conn)
 
@@ -376,8 +376,8 @@ def main() -> None:
     db = init_db()
 
     try:
-        server_sock = socket(AF_INET, SOCK_STREAM)
-        server_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind((SERVER_HOST, SERVER_PORT))
         server_sock.listen(MAX_PENDING)
         log.info("LOL Retro Chat Server ready on %s:%s", SERVER_HOST, SERVER_PORT)

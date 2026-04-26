@@ -4,7 +4,7 @@ Tkinter client with a synthwave/vaporwave aesthetic, sound effects,
 dachshund + retro emoji picker, image/GIF sharing, and self-service
 account creation.
 """
-from socket import *
+import socket
 import base64
 import math
 import os
@@ -213,7 +213,7 @@ class SoundFX:
 class LineSocket:
     """Wraps a socket with a line-buffered reader and line-aware sender."""
 
-    def __init__(self, sock: socket):
+    def __init__(self, sock: socket.socket):
         self.sock = sock
         self._buf = bytearray()
 
@@ -888,7 +888,7 @@ class BuddyList(tk.Tk):
     def _open_socket(self, host: str, port: int) -> LineSocket | None:
         self._set_status(f"Connecting to {host}:{port}…")
         try:
-            sock = socket(AF_INET, SOCK_STREAM)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(8)
             sock.connect((host, port))
             sock.settimeout(None)

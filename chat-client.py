@@ -1,5 +1,5 @@
 # Created By Nicholas Vaughn  Computer Networking ECPE 177	10/12/2017
-from socket import *
+import socket
 import sys
 import threading 
 import time 
@@ -13,9 +13,9 @@ def initClient(): # this will initialize the client  and socket
 	serverPort = int(serverPort)
 	#creating the socket
 	try:
-		clientSocket = socket(AF_INET, SOCK_STREAM)
+		clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		clientSocket.connect((serverName,serverPort))
-	except: #catching the error so we can print out one line instead of having the default error
+	except OSError: #catching the error so we can print out one line instead of having the default error
 		print('ERROR: Could not connect to Host, Please recheck information or if server is active')
 		sys.exit(0)
 	 	
@@ -46,7 +46,7 @@ def serverRec(): # this will revceive messages from the server, and search for s
 	global recFlag
 	while recFlag:
 		data = clientSocket.recv(1024)
-		dataStr = data.decode();
+		dataStr = data.decode()
 		if 'SIGNOFF' in dataStr:
 			h,t = dataStr.split(':')
 			t,n = t.split('\n') #takes away new line character
