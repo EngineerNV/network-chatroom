@@ -1,3 +1,9 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# server-side runtime data
+chat-data.db
+chat-data.db-journal
+chat-data.db-wal
+chat-data.db-shm
