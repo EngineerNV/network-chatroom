@@ -83,7 +83,12 @@ EMOJI_PALETTE = DACHSHUND_EMOJIS + RETRO_EMOJIS
 #  Sound effects: generate WAVs at startup, play via platform tools
 # ─────────────────────────────────────────────────────────────────────────────
 class SoundFX:
-    """Generates a few short WAV files on disk and plays them on demand."""
+    """Generates a few short WAV files on disk and plays them on demand.
+
+    Synthesizing tones at startup keeps the project zero-dependency (no
+    bundled audio assets, no pip packages). Playback is delegated to the
+    OS's audio CLI so we don't need to link an audio library into Python.
+    """
 
     SAMPLE_RATE = 22050
 
@@ -178,6 +183,8 @@ class SoundFX:
         path = self.paths.get(name)
         if not path:
             return
+        # Off-thread so audio playback never blocks the Tk event loop, even
+        # if the chosen player takes a moment to spawn.
         threading.Thread(target=self._play_blocking, args=(path,), daemon=True).start()
 
     def _play_blocking(self, path: str) -> None:
@@ -436,12 +443,20 @@ class EmojiPicker(tk.Toplevel):
 #  Animated-GIF helper (manual frame cycling via PhotoImage)
 # ─────────────────────────────────────────────────────────────────────────────
 class GifAnim:
-    """Loads all frames of a GIF from disk and cycles them in a Text widget."""
+    """Loads all frames of a GIF from disk and cycles them in a Text widget.
+
+    Tk's PhotoImage doesn't expose animated-GIF playback directly; the
+    workaround is to load each frame by index and rotate the displayed
+    image manually. We use a fixed ~10 fps tick rather than parsing per-
+    frame delays — good enough for chat-window doodles, not for cinema.
+    """
 
     def __init__(self, text_widget: tk.Text, path: str):
         self.text = text_widget
         self.frames: list[tk.PhotoImage] = []
         self._stopped = False
+        # Probe frame indexes until PhotoImage refuses; that's how we
+        # discover the frame count without a GIF parser.
         i = 0
         while True:
             try:
@@ -450,7 +465,6 @@ class GifAnim:
                 break
             self.frames.append(frame)
             i += 1
-        # If we couldn't read any frames just leave self.frames empty.
 
     def start(self, idx: int):
         """Begin cycling, replacing image at text index `idx`."""
@@ -489,7 +503,8 @@ class ChatWindow(tk.Toplevel):
         self.send_media_cb = send_media_cb
         self.sfx = sfx
 
-        # Keep references so PhotoImages don't get GC'd
+        # Tk doesn't hold strong refs to PhotoImages embedded in widgets;
+        # if these lists go out of scope the images vanish from the chat log.
         self._image_refs: list[tk.PhotoImage] = []
         self._gif_anims: list[GifAnim] = []
 
@@ -645,8 +660,9 @@ class ChatWindow(tk.Toplevel):
         self.log.insert("end", f"sent a {kind}: {filename}\n",
                         "self_msg" if is_self else "other_msg")
 
-        # Save to a temp file (PhotoImage with `data=` works for PNGs but
-        # animated-GIF frame addressing requires a `file` argument).
+        # PhotoImage(data=…) handles base64 PNGs fine, but the `gif -index N`
+        # frame trick only accepts a file path — so we round-trip via a
+        # short-lived temp file even for static images, for consistency.
         tmp = tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".gif" if kind == "gif" else ".png",
@@ -960,6 +976,8 @@ class BuddyList(tk.Tk):
 
     # ── Networking ────────────────────────────────────────────────────────────
     def _recv_loop(self):
+        # Runs on a background thread; every UI mutation must be marshalled
+        # back to the Tk thread via `after(0, …)` to stay thread-safe.
         while self.running:
             line = self.line_sock.read_line() if self.line_sock else None
             if line is None:

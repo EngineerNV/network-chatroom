@@ -43,6 +43,7 @@ SEED_USERS = {
 _lock = threading.Lock()
 socket_list: list[tuple[str, socket]] = []   # [(username, conn), ...]
 online: list[str] = []
+# Separate from `_lock` so a slow disk write can't stall message routing.
 _db_lock = threading.Lock()
 
 
@@ -51,6 +52,8 @@ def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     """Return (salt_hex, hash_hex)."""
     if salt is None:
         salt = secrets.token_bytes(16)
+    # 120k iterations: comfortably above OWASP-recommended floor for SHA256
+    # while still cheap enough not to stall the auth handshake on a laptop.
     h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
     return salt.hex(), h.hex()
 
@@ -72,6 +75,8 @@ def _connect_db() -> sqlite3.Connection:
 
 
 def init_db() -> sqlite3.Connection:
+    # Seed accounts only land on a brand-new DB; once chat-data.db exists,
+    # editing SEED_USERS has no effect (delete the file to re-seed).
     fresh = not os.path.exists(DB_PATH)
     conn = _connect_db()
     conn.executescript(
@@ -158,7 +163,12 @@ def db_log_message(sender: str, recipient: str, kind: str) -> None:
 
 # ── Networking helpers ───────────────────────────────────────────────────────
 class LineReader:
-    """Buffered line reader so we can handle large base64 media payloads."""
+    """Buffered line reader so we can handle large base64 media payloads.
+
+    A naive `recv(BUFFER)` would split a multi-megabyte TOMEDIA line across
+    multiple reads and corrupt the protocol; this accumulates until a real
+    `\\n` arrives.
+    """
 
     def __init__(self, sock: socket):
         self.sock = sock
@@ -173,8 +183,10 @@ class LineReader:
             if not chunk:
                 return None
             self.buf.extend(chunk)
+            # Cap per-line memory so a malicious peer can't OOM the server
+            # by streaming bytes without ever sending a newline.
             if len(self.buf) > MAX_LINE_BYTES:
-                return None  # protocol abuse, drop the connection
+                return None
         idx = self.buf.index(b"\n")
         line = bytes(self.buf[:idx]).decode("utf-8", errors="replace").strip()
         del self.buf[: idx + 1]
