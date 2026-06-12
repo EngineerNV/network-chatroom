@@ -11,11 +11,17 @@ sound effects, dachshund emojis, image/GIF sharing, and SQLite accounts.)
   PBKDF2-SHA256 password hashes. Self-service registration. Buffered
   per-client `LineReader` so large base64 media payloads (≤8 MB/line) are
   routed correctly.
-- **chat-client-gui.py** — Tkinter GUI client. Two threads: one drains the
-  server socket via a `LineSocket` reader, one runs the UI. Includes
+- **chat-client-gui.py** — Tkinter GUI client. A background thread drains
+  the server socket via a `LineSocket` reader and hands lines to the Tk
+  thread through a `queue.Queue` polled by `after()` (tkinter's `after` is
+  NOT safe to call from other threads — keep it that way). Includes
   generated sound effects, dachshund + retro emoji picker, animated-GIF
   rendering in the `Text` widget, and a menu bar.
-- **chat-client.py** — Original CLI client (kept for reference / testing).
+- **chat-client.py** — Minimal CLI client (sign-in, registration, LIST,
+  text DMs). Useful for testing the server without tkinter.
+- **tests/** — `test_backend.py` (server e2e over real sockets, stdlib
+  only), `test_gui_smoke.py` (drives a real GUI under Xvfb), and
+  `capture_screenshots.py` (regenerates `screenshots/`).
 
 ## Protocol
 
@@ -79,6 +85,14 @@ python3 chat-client-gui.py
 - No external pip packages
 
 ## Common Tasks
+
+### Run the tests
+```bash
+python3 tests/test_backend.py                 # server e2e, no GUI needed
+xvfb-run -a python3 tests/test_gui_smoke.py   # GUI smoke test, headless
+```
+Run both before pushing changes to the server, the protocol, or the
+client's networking/rendering paths.
 
 ### Change server port/address
 Edit `SERVER_HOST` / `SERVER_PORT` near the top of `chat-server.py`, and

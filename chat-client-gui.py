@@ -8,6 +8,7 @@ import socket
 import base64
 import math
 import os
+import queue
 import struct
 import subprocess
 import sys
@@ -30,24 +31,20 @@ NEON_PINK     = "#FF2E9A"
 NEON_CYAN     = "#00F0FF"
 NEON_PURPLE   = "#A445FF"
 NEON_YELLOW   = "#F9F871"
-NEON_GREEN    = "#3DFFB0"
 DEEP_NAVY     = "#0D0221"
 DEEP_PURPLE   = "#241734"
 PANEL_BG      = "#1B0A2E"
 CHAT_BG       = "#120524"
-GRID_LINE     = "#3A1A5E"
 TEXT_FG       = "#F4E9FF"
 DIM_TEXT      = "#9B7FBF"
 SELF_MSG      = "#FFD23F"      # warm gold for own messages
 OTHER_MSG     = "#00F0FF"      # cyan for incoming
 SYSTEM_MSG    = "#FF8AD8"      # soft pink for system
-ERROR_FG      = "#FF4D6D"
 BTN_BG        = "#2D124D"
 BTN_ACTIVE    = "#4A1F7A"
 BORDER_GLOW   = "#FF2E9A"
 
 # ── Fonts ────────────────────────────────────────────────────────────────────
-FONT_TITLE    = ("Courier New", 14, "bold")
 FONT_HEADER   = ("Courier New", 10, "bold")
 FONT_BODY     = ("Courier New", 11)
 FONT_CHAT     = ("Courier New", 11)
@@ -76,7 +73,6 @@ RETRO_EMOJIS = [
     "💌", "📬", "🪩", "🎀", "🌈", "✨", "⭐", "🌟", "💫", "🔮",
     "🛼", "🎧", "🎤", "🪀", "🧃", "🍭", "🍓", "🌸",
 ]
-EMOJI_PALETTE = DACHSHUND_EMOJIS + RETRO_EMOJIS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -456,11 +452,12 @@ class GifAnim:
             self.frames.append(frame)
             i += 1
 
-    def start(self, idx: int):
-        """Begin cycling, replacing image at text index `idx`."""
+    def start(self, img_name: str):
+        """Begin cycling the embedded image identified by `img_name`
+        (the stable name returned by Text.image_create)."""
         if not self.frames:
             return
-        self._idx = idx
+        self._img_name = img_name
         self._frame_i = 0
         self._tick()
 
@@ -468,7 +465,8 @@ class GifAnim:
         if self._stopped or not self.frames:
             return
         try:
-            self.text.image_configure(self._idx, image=self.frames[self._frame_i])
+            self.text.image_configure(self._img_name,
+                                      image=self.frames[self._frame_i])
         except tk.TclError:
             self._stopped = True
             return
@@ -521,6 +519,12 @@ class ChatWindow(tk.Toplevel):
         tk.Label(bar, text="🌭  ", font=FONT_EMOJI,
                  fg=NEON_PINK, bg=DEEP_PURPLE).pack(side="right")
 
+        # Packed before the log so the packer can never squeeze the input
+        # row out of view when the Text widget wants more height than the
+        # window has.
+        input_frame = tk.Frame(self, bg=DEEP_NAVY)
+        input_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+
         log_frame = tk.Frame(self, bg=DEEP_NAVY,
                              highlightbackground=NEON_PURPLE,
                              highlightthickness=1)
@@ -529,7 +533,7 @@ class ChatWindow(tk.Toplevel):
         self.log = scrolledtext.ScrolledText(
             log_frame, font=FONT_CHAT, bg=CHAT_BG, fg=TEXT_FG,
             relief="flat", state="disabled", wrap="word", cursor="arrow",
-            insertbackground=NEON_PINK, padx=8, pady=8,
+            insertbackground=NEON_PINK, padx=8, pady=8, height=14,
         )
         self.log.pack(fill="both", expand=True)
         self.log.tag_configure("self_name", foreground=SELF_MSG,
@@ -540,9 +544,6 @@ class ChatWindow(tk.Toplevel):
         self.log.tag_configure("other_msg", foreground=TEXT_FG)
         self.log.tag_configure("system", foreground=SYSTEM_MSG, font=FONT_SYSTEM)
         self.log.tag_configure("ts", foreground=DIM_TEXT, font=FONT_MONO_SM)
-
-        input_frame = tk.Frame(self, bg=DEEP_NAVY)
-        input_frame.pack(fill="x", padx=8, pady=(0, 8))
 
         self.input_var = tk.StringVar()
         entry = tk.Entry(
@@ -604,7 +605,9 @@ class ChatWindow(tk.Toplevel):
             return
         kind = "gif" if ext == ".gif" else "image"
         b64 = base64.b64encode(raw).decode("ascii")
-        filename = os.path.basename(path)
+        # ':' is the protocol field delimiter and '\n' the message
+        # terminator — either inside a filename would corrupt the framing.
+        filename = os.path.basename(path).replace(":", "_").replace("\n", "_")
         self.send_media_cb(self.buddy, kind, filename, b64)
         self._render_media(self.my_name, kind, filename, raw, is_self=True)
         self.sfx.play("msg_send")
@@ -665,15 +668,16 @@ class ChatWindow(tk.Toplevel):
             return
 
         self._image_refs.append(img)
-        self.log.image_create("end", image=img)
-        idx = self.log.index("end-1c")  # location of the image we just inserted
+        # image_create returns a stable name for the embedded image; a
+        # numeric index would drift as later messages push text around.
+        img_name = self.log.image_create("end", image=img)
         self.log.insert("end", "\n")
 
         if kind == "gif":
             anim = GifAnim(self.log, tmp.name)
             if len(anim.frames) > 1:
                 self._gif_anims.append(anim)
-                anim.start(idx)
+                anim.start(img_name)
 
         self.log.see("end")
         self.log.configure(state="disabled")
@@ -698,6 +702,10 @@ class BuddyList(tk.Tk):
         self.line_sock: LineSocket | None = None
         self.rec_thread: threading.Thread | None = None
         self.running = False
+        # tkinter's after() is not safe to call from other threads, so the
+        # reader thread hands lines over via this queue and the Tk thread
+        # drains it from a self-rescheduling after() poll (None = EOF).
+        self._incoming: queue.Queue[str | None] = queue.Queue()
 
         self.sfx = SoundFX()
 
@@ -714,6 +722,7 @@ class BuddyList(tk.Tk):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
         self.protocol("WM_DELETE_WINDOW", self._on_quit)
+        self.after(50, self._poll_incoming)
         self.after(100, self._show_login)
 
     # ── Menu ──────────────────────────────────────────────────────────────────
@@ -956,22 +965,34 @@ class BuddyList(tk.Tk):
 
     # ── Networking ────────────────────────────────────────────────────────────
     def _recv_loop(self):
-        # Runs on a background thread; every UI mutation must be marshalled
-        # back to the Tk thread via `after(0, …)` to stay thread-safe.
+        # Background thread: blocking socket reads only. All UI work happens
+        # in _poll_incoming on the Tk thread, fed through self._incoming.
         while self.running:
             line = self.line_sock.read_line() if self.line_sock else None
             if line is None:
                 break
             if line:
-                self.after(0, self._handle_server_msg, line)
-        self.after(0, self._on_disconnected)
+                self._incoming.put(line)
+        self._incoming.put(None)
+
+    def _poll_incoming(self):
+        try:
+            while True:
+                line = self._incoming.get_nowait()
+                if line is None:
+                    self._on_disconnected()
+                else:
+                    self._handle_server_msg(line)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_incoming)
 
     def _handle_server_msg(self, msg: str):
         if msg.startswith("SIGNIN:"):
             user = msg.split(":", 1)[1]
             self._add_buddy(user)
             self._set_status(f"{user} has signed on!")
-            self._system_notice(f"{user} has signed on!")
+            self._system_notice(f"{user} has signed on!", open_window=False)
             if user != self.my_name:
                 self.sfx.play("signin")
 
@@ -979,7 +1000,7 @@ class BuddyList(tk.Tk):
             user = msg.split(":", 1)[1]
             self._remove_buddy(user)
             self._set_status(f"{user} has signed off.")
-            self._system_notice(f"{user} has signed off.")
+            self._system_notice(f"{user} has signed off.", open_window=False)
             self.sfx.play("signoff")
             if user in self.chat_windows and self.chat_windows[user].winfo_exists():
                 self.chat_windows[user].append_system(f"{user} has signed off.")
@@ -1072,8 +1093,13 @@ class BuddyList(tk.Tk):
             self.chat_windows[buddy] = win
         return self.chat_windows[buddy]
 
-    def _system_notice(self, msg: str):
+    def _system_notice(self, msg: str, open_window: bool = True):
+        # Routine presence chatter shouldn't pop a window in the user's
+        # face — those callers pass open_window=False and the notice only
+        # lands here if the window is already open.
         if self.system_win is None or not self.system_win.winfo_exists():
+            if not open_window:
+                return
             self.system_win = ChatWindow(
                 self, "LOL", "★ System Notices ★",
                 lambda *_: None, lambda *_: None, self.sfx,
@@ -1165,6 +1191,7 @@ class BuddyList(tk.Tk):
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
+    print(LOL_BANNER)
     app = BuddyList()
     app.mainloop()
 

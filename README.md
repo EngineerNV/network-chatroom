@@ -9,6 +9,21 @@
 
 ---
 
+## Screenshots
+
+| Sign in | Buddy list |
+|---------|------------|
+| ![Sign-in dialog](screenshots/01-sign-in.png) | ![Buddy list](screenshots/02-buddy-list.png) |
+
+| Conversation with inline media | Emoji picker |
+|--------------------------------|--------------|
+| ![Conversation](screenshots/03-conversation.png) | ![Emoji picker](screenshots/04-emoji-picker.png) |
+
+*(Captured headlessly under Xvfb — emoji render in color on desktops with an
+emoji font installed.)*
+
+---
+
 ## Requirements
 
 - Python 3.10+ (uses `X | Y` type hints)
@@ -120,12 +135,41 @@ buffers up to 8 MB per line.
 
 ---
 
+## Testing
+
+Both suites are stdlib-only. The backend suite boots the real server on an
+ephemeral port against a throwaway database and drives it over TCP:
+
+```bash
+python3 tests/test_backend.py
+```
+
+The GUI suite drives a real `BuddyList` window end to end (sign-in, message
+routing, inline media, sound generation). It needs tkinter and an X display —
+on a headless box, use Xvfb:
+
+```bash
+xvfb-run -a python3 tests/test_gui_smoke.py
+```
+
+To regenerate the README screenshots (needs `xwd` from x11-apps and
+ImageMagick):
+
+```bash
+xvfb-run -a -s "-screen 0 1280x800x24" python3 tests/capture_screenshots.py
+```
+
+---
+
 ## Files
 
 | File | Description |
 |------|-------------|
 | `chat-server.py` | Multi-threaded TCP server with SQLite accounts, registration, message logging, and base64 media routing |
 | `chat-client-gui.py` | Tkinter GUI client (synthwave theme, sound FX, emoji picker, media sharing, menu bar) |
-| `chat-client.py` | Original CLI client — kept for reference and testing |
+| `chat-client.py` | Minimal CLI client — sign-in, registration, listing, text DMs; handy for testing without tkinter |
+| `tests/test_backend.py` | End-to-end server tests over real sockets |
+| `tests/test_gui_smoke.py` | Headless GUI smoke tests (Xvfb-friendly) |
+| `tests/capture_screenshots.py` | Regenerates the README screenshots |
 | `chat-data.db` | SQLite database (gitignored, generated on first server run) |
 | `CLAUDE.md` | Developer reference: architecture, protocol, and common tasks |
