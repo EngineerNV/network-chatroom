@@ -232,14 +232,12 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     log.info("Connection from %s:%s", *addr)
     reader = LineReader(conn)
 
-    # --- Handshake ---
     line = reader.readline()
     if line != "HELLO":
         conn.close()
         return
     _send(conn, "HELLO")
 
-    # --- Auth / Registration loop ---
     auth_user = ""
     auth_attempts = 0
     while auth_user == "":
@@ -294,10 +292,8 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             conn.close()
             return
 
-        # Unknown pre-auth command
         _send(conn, "AUTHNO:not_authenticated")
 
-    # --- Main message loop ---
     try:
         while True:
             line = reader.readline()
@@ -326,7 +322,6 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     log.info("%s -> %s [text]", auth_user, recipient)
 
             elif line.startswith("TOMEDIA:"):
-                # TOMEDIA:recipient:kind:filename:base64data
                 parts = line.split(":", 4)
                 if len(parts) != 5:
                     _send(conn, "SYSMSG:malformed media payload")
@@ -350,7 +345,6 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                             line[:80] + ("..." if len(line) > 80 else ""))
 
     finally:
-        # --- Clean up ---
         with _lock:
             try:
                 socket_list.remove((auth_user, conn))

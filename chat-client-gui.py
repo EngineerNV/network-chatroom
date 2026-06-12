@@ -106,7 +106,6 @@ class SoundFX:
             return ["__winsound__"]
         if sys.platform == "darwin":
             return ["afplay"]
-        # linux / other: try a few common ones
         for cmd in (["paplay"], ["aplay", "-q"], ["play", "-q"], ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]):
             try:
                 subprocess.run([cmd[0], "--version"], stdout=subprocess.DEVNULL,
@@ -119,7 +118,6 @@ class SoundFX:
     # ── tone synthesis ───────────────────────────────────────────────────────
     def _write_wav(self, name: str, samples: list[float]) -> str:
         path = os.path.join(self.dir, f"{name}.wav")
-        # Convert floats in [-1, 1] to int16 little-endian.
         frames = bytearray()
         for s in samples:
             v = max(-1.0, min(1.0, s))
@@ -141,7 +139,6 @@ class SoundFX:
             sample = 0.0
             for k, amp in enumerate(harmonics, start=1):
                 sample += amp * math.sin(2 * math.pi * freq * k * t)
-            # simple AD envelope
             env = 1.0
             if t < attack:
                 env = t / attack
@@ -293,7 +290,6 @@ class LoginDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
-        # Banner
         banner = tk.Frame(self, bg=DEEP_NAVY)
         banner.pack(fill="x", pady=(12, 0))
 
@@ -306,15 +302,12 @@ class LoginDialog(tk.Toplevel):
                  font=("Courier New", 14), fg=NEON_YELLOW,
                  bg=DEEP_NAVY).pack(pady=(6, 0))
 
-        # Tagline
         tk.Label(self, text='"You\'ve got vibes!"',
                  font=("Courier New", 10, "italic"),
                  fg=NEON_PURPLE, bg=DEEP_NAVY).pack(pady=(8, 4))
 
-        # Glowing separator
         tk.Frame(self, bg=NEON_PINK, height=2).pack(fill="x", padx=24, pady=4)
 
-        # Form
         form = tk.Frame(self, bg=DEEP_NAVY, padx=32)
         form.pack(fill="x", pady=8)
 
@@ -341,7 +334,6 @@ class LoginDialog(tk.Toplevel):
 
         form.columnconfigure(0, weight=1)
 
-        # Host / port row
         host_row = tk.Frame(self, bg=DEEP_NAVY, padx=32)
         host_row.pack(fill="x", pady=(4, 4))
         tk.Label(host_row, text="HOST", font=FONT_MONO_SM,
@@ -355,7 +347,6 @@ class LoginDialog(tk.Toplevel):
         e.config(width=6)
         e.pack(side="left", padx=4)
 
-        # Buttons
         btns = tk.Frame(self, bg=DEEP_NAVY)
         btns.pack(pady=18)
 
@@ -367,7 +358,6 @@ class LoginDialog(tk.Toplevel):
 
         self.bind("<Return>", lambda _e: self._on_sign_in())
 
-        # Footer
         tk.Label(self, text="▼ no copyright dachshunds were harmed ▼",
                  font=FONT_MONO_SM, fg=DIM_TEXT,
                  bg=DEEP_NAVY).pack(side="bottom", pady=8)
@@ -521,7 +511,6 @@ class ChatWindow(tk.Toplevel):
         self.lift()
 
     def _build(self):
-        # Title bar
         bar = tk.Frame(self, bg=DEEP_PURPLE, height=30,
                        highlightbackground=NEON_PINK, highlightthickness=1)
         bar.pack(fill="x")
@@ -532,7 +521,6 @@ class ChatWindow(tk.Toplevel):
         tk.Label(bar, text="🌭  ", font=FONT_EMOJI,
                  fg=NEON_PINK, bg=DEEP_PURPLE).pack(side="right")
 
-        # Chat log
         log_frame = tk.Frame(self, bg=DEEP_NAVY,
                              highlightbackground=NEON_PURPLE,
                              highlightthickness=1)
@@ -553,7 +541,6 @@ class ChatWindow(tk.Toplevel):
         self.log.tag_configure("system", foreground=SYSTEM_MSG, font=FONT_SYSTEM)
         self.log.tag_configure("ts", foreground=DIM_TEXT, font=FONT_MONO_SM)
 
-        # Input row
         input_frame = tk.Frame(self, bg=DEEP_NAVY)
         input_frame.pack(fill="x", padx=8, pady=(0, 8))
 
@@ -619,7 +606,6 @@ class ChatWindow(tk.Toplevel):
         b64 = base64.b64encode(raw).decode("ascii")
         filename = os.path.basename(path)
         self.send_media_cb(self.buddy, kind, filename, b64)
-        # show locally
         self._render_media(self.my_name, kind, filename, raw, is_self=True)
         self.sfx.play("msg_send")
 
@@ -792,7 +778,6 @@ class BuddyList(tk.Tk):
 
     # ── Build UI ──────────────────────────────────────────────────────────────
     def _build(self):
-        # Header
         header = tk.Frame(self, bg=DEEP_NAVY, height=84,
                           highlightbackground=NEON_PINK, highlightthickness=1)
         header.pack(fill="x")
@@ -807,7 +792,6 @@ class BuddyList(tk.Tk):
         tk.Label(header, text="🌭", font=("Courier New", 28),
                  fg=NEON_YELLOW, bg=DEEP_NAVY).pack(side="right", padx=8)
 
-        # Screen-name bar
         self.name_bar = tk.Frame(self, bg=DEEP_PURPLE, height=24)
         self.name_bar.pack(fill="x")
         self.name_bar.pack_propagate(False)
@@ -817,7 +801,6 @@ class BuddyList(tk.Tk):
         )
         self.screen_name_lbl.pack(side="left", padx=8)
 
-        # Buddies header
         bl_header = tk.Frame(self, bg=PANEL_BG, height=22)
         bl_header.pack(fill="x")
         bl_header.pack_propagate(False)
@@ -828,7 +811,6 @@ class BuddyList(tk.Tk):
                                         bg=PANEL_BG)
         self.buddy_count_lbl.pack(side="right", padx=6)
 
-        # Listbox
         list_frame = tk.Frame(self, bg=DEEP_NAVY,
                               highlightbackground=NEON_PURPLE,
                               highlightthickness=1)
@@ -850,7 +832,6 @@ class BuddyList(tk.Tk):
         scrollbar.config(command=self.buddy_listbox.yview)
         self.buddy_listbox.bind("<Double-Button-1>", self._on_buddy_double_click)
 
-        # Status bar
         self.status_var = tk.StringVar(value="✦ Welcome to LOL ✦")
         status_bar = tk.Label(
             self, textvariable=self.status_var,
@@ -859,7 +840,6 @@ class BuddyList(tk.Tk):
         )
         status_bar.pack(fill="x", side="bottom")
 
-        # Button row
         btn_row = tk.Frame(self, bg=DEEP_NAVY)
         btn_row.pack(fill="x", padx=4, pady=4, side="bottom")
 
