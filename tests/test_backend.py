@@ -68,7 +68,9 @@ class TestClient:
 
     def handshake(self) -> None:
         self.send("HELLO")
-        assert self.read() == "HELLO"
+        resp = self.read()
+        if resp != "HELLO":
+            raise RuntimeError(f"handshake failed: expected 'HELLO', got {resp!r}")
 
     def login(self, user: str, pwd: str) -> str:
         self.handshake()

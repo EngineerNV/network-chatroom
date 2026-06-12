@@ -495,6 +495,7 @@ class ChatWindow(tk.Toplevel):
         # if these lists go out of scope the images vanish from the chat log.
         self._image_refs: list[tk.PhotoImage] = []
         self._gif_anims: list[GifAnim] = []
+        self._tmp_media_paths: list[str] = []
 
         self.title(f"✦ IM with {buddy} ✦")
         self.configure(bg=DEEP_NAVY)
@@ -586,7 +587,7 @@ class ChatWindow(tk.Toplevel):
         ext = os.path.splitext(path)[1].lower()
         if ext not in SUPPORTED_MEDIA_EXTS:
             messagebox.showwarning(
-                "LOL", "Tkinter only supports PNG and GIF inline.\n"
+                "LOL", "Tkinter only supports PNG, GIF, PGM, and PPM inline.\n"
                        "Convert your file first.", parent=self)
             self.sfx.play("error")
             return
@@ -664,10 +665,15 @@ class ChatWindow(tk.Toplevel):
             img = tk.PhotoImage(file=tmp.name)
         except tk.TclError as exc:
             self.append_system(f"Could not display image: {exc}")
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
             self.log.configure(state="disabled")
             return
 
         self._image_refs.append(img)
+        self._tmp_media_paths.append(tmp.name)
         # image_create returns a stable name for the embedded image; a
         # numeric index would drift as later messages push text around.
         img_name = self.log.image_create("end", image=img)
@@ -685,6 +691,11 @@ class ChatWindow(tk.Toplevel):
     def _on_close(self):
         for a in self._gif_anims:
             a.stop()
+        for path in self._tmp_media_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
         self.destroy()
 
 

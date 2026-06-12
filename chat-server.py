@@ -129,6 +129,8 @@ def db_register(username: str, password: str) -> tuple[bool, str]:
         return False, "username may only contain letters, digits, _ - ."
     if len(password) < 3:
         return False, "password too short"
+    if len(password) > 128:
+        return False, "password too long"
     salt, h = _hash_password(password)
     with _db_lock:
         try:

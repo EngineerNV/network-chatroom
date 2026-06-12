@@ -31,7 +31,7 @@ def load_client_module():
 
 def snap(name: str) -> None:
     path = os.path.join(OUT_DIR, name)
-    xwd = subprocess.run(["xwd", "-root", "-silent"], capture_output=True)
+    xwd = subprocess.run(["xwd", "-root", "-silent"], capture_output=True, check=True)
     subprocess.run(["convert", "xwd:-", path], input=xwd.stdout, check=True)
     print(f"wrote {path}")
 

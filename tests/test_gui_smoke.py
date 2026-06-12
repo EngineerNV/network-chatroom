@@ -45,9 +45,13 @@ class RawPeer:
         self.sock = socket.create_connection(("localhost", port), timeout=5)
         self._buf = bytearray()
         self.send("HELLO")
-        assert self.read() == "HELLO"
+        resp = self.read()
+        if resp != "HELLO":
+            raise RuntimeError(f"handshake failed: expected 'HELLO', got {resp!r}")
         self.send(f"AUTH:{user}:{pwd}")
-        assert self.read() == "AUTHYES"
+        resp = self.read()
+        if resp != "AUTHYES":
+            raise RuntimeError(f"auth failed: expected 'AUTHYES', got {resp!r}")
 
     def send(self, line: str) -> None:
         self.sock.sendall((line + "\n").encode("utf-8"))
@@ -94,12 +98,16 @@ class GuiSmokeTest(unittest.TestCase):
         server_copy = os.path.join(cls.tmpdir, "chat-server.py")
         with open(os.path.join(REPO_ROOT, "chat-server.py")) as f:
             src = f.read()
+        # Pick an ephemeral free port and patch the copied server to use it.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("localhost", 0))
+            cls.port = probe.getsockname()[1]
+        src = src.replace("SERVER_PORT = 12000", f"SERVER_PORT = {cls.port}", 1)
         with open(server_copy, "w") as f:
             f.write(src)
         cls.server = subprocess.Popen(
             [sys.executable, server_copy],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        cls.port = 12000
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
@@ -121,7 +129,8 @@ class GuiSmokeTest(unittest.TestCase):
         cls.app = TestableBuddyList()
         cls.app._connect("localhost", cls.port, "test1", "p000")
         cls.pump()
-        assert cls.app.running, "GUI failed to sign in"
+        if not cls.app.running:
+            raise RuntimeError("GUI failed to sign in")
 
         cls.peer = RawPeer(cls.port, "test2", "p000")
         cls.pump()
